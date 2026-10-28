@@ -1,0 +1,31 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.mod
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)"
+      # -mod=mod fills in go.sum when it is missing; drop it once go.sum is committed.
+      - name: Vet
+        run: go vet -mod=mod ./...
+      - name: Test
+        run: go test -mod=mod -race ./...
+
+  image:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t telemetry-processor:ci .
