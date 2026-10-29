@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"log/slog"
 	"strings"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/spr732/connectivity-contracts/wire"
+	"github.com/spr732/connectivity-telemetry-processor/migrations"
 )
 
 type fakeStore struct {
@@ -37,6 +39,15 @@ func (f *fakeStore) SaveBatch(_ context.Context, env wire.TelemetryEnvelope) (bo
 }
 
 func (f *fakeStore) ApplyDeviceEvent(context.Context, wire.DeviceEvent) error { return nil }
+
+func (f *fakeStore) SaveBundle(_ context.Context, ev wire.BundleUploadedEvent) (bool, error) {
+	if f.seen == nil {
+		f.seen = map[string]bool{}
+	}
+	dup := f.seen["bundle:"+ev.BundleID]
+	f.seen["bundle:"+ev.BundleID] = true
+	return dup, nil
+}
 
 func newTestProcessor(st store) *Processor {
 	return newWithClient(Config{Group: "test", MaxRetry: 5 * time.Millisecond}, nil, st,
@@ -110,5 +121,59 @@ func TestSampleInsert(t *testing.T) {
 	}
 	if len(args) != 12 {
 		t.Fatalf("got %d args, want 12", len(args))
+	}
+}
+
+func bundleRecord(t *testing.T, ev wire.BundleUploadedEvent) *kgo.Record {
+	t.Helper()
+	v, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &kgo.Record{Topic: wire.TopicBundles, Key: []byte(ev.DeviceID), Value: v}
+}
+
+func TestBundleEventsAreIndexedOnce(t *testing.T) {
+	p := newTestProcessor(&fakeStore{})
+	ev := wire.BundleUploadedEvent{BundleID: "b1", DeviceID: "dev-1", Reason: wire.ReasonAlert,
+		ObjectKey: "bundles/dev-1/b1.tar.gz", SizeBytes: 10, CollectedAt: time.Now().Add(-time.Minute)}
+	for i := 0; i < 2; i++ { // the contract allows the same event twice
+		if err := p.handleWithRetry(context.Background(), bundleRecord(t, ev)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := testutil.ToFloat64(p.m.records.WithLabelValues(wire.TopicBundles, "stored")); got != 1 {
+		t.Fatalf("stored = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(p.m.records.WithLabelValues(wire.TopicBundles, "duplicate")); got != 1 {
+		t.Fatalf("duplicate = %v, want 1", got)
+	}
+}
+
+func TestBundleEventWithoutObjectKeyIsPoison(t *testing.T) {
+	p := newTestProcessor(&fakeStore{})
+	ev := wire.BundleUploadedEvent{BundleID: "b1", DeviceID: "dev-1"}
+	if err := p.handleWithRetry(context.Background(), bundleRecord(t, ev)); err != nil {
+		t.Fatal(err)
+	}
+	if got := testutil.ToFloat64(p.m.records.WithLabelValues(wire.TopicBundles, "poison")); got != 1 {
+		t.Fatalf("poison = %v, want 1", got)
+	}
+}
+
+func TestMigrationsApplyInOrder(t *testing.T) {
+	names, err := migrationFiles(migrations.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"001_init.sql", "002_log_bundles.sql"}
+	if strings.Join(names, ",") != strings.Join(want, ",") {
+		t.Fatalf("migrations = %v, want %v", names, want)
+	}
+	for _, n := range names {
+		body, _ := fs.ReadFile(migrations.FS, n)
+		if !strings.Contains(string(body), "IF NOT EXISTS") {
+			t.Fatalf("%s should be safe to re-run (use IF NOT EXISTS)", n)
+		}
 	}
 }

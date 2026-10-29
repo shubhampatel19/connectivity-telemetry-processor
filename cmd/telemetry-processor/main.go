@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -39,6 +40,9 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	defer store.Close()
+	if err := store.Migrate(ctx, log); err != nil {
+		return fmt.Errorf("migrate database: %w", err)
+	}
 
 	reg := platform.NewRegistry()
 	proc, err := processor.New(processor.Config{Brokers: brokers, Group: group, MaxPoll: maxPoll}, store, log, reg)

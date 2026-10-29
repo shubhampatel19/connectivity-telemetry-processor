@@ -99,6 +99,25 @@ func sampleInsert(b wire.TelemetryBatch) (string, []any) {
 	return sb.String(), args
 }
 
+// SaveBundle indexes a stored log bundle. The contract allows duplicate
+// events (a retried completion can publish twice); the primary key absorbs
+// them and duplicate reports it.
+func (s *Store) SaveBundle(ctx context.Context, ev wire.BundleUploadedEvent) (duplicate bool, err error) {
+	res, err := s.db.ExecContext(ctx,
+		`INSERT INTO log_bundles (bundle_id, device_id, reason, object_key, size_bytes, sha256, collected_at, uploaded_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		 ON CONFLICT (bundle_id) DO NOTHING`,
+		ev.BundleID, ev.DeviceID, string(ev.Reason), ev.ObjectKey, ev.SizeBytes, ev.SHA256, ev.CollectedAt, ev.UploadedAt)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 0, nil
+}
+
 // ApplyDeviceEvent upserts the device row. last_seen only moves forward, so a
 // replayed or late event can't make a live device look stale.
 func (s *Store) ApplyDeviceEvent(ctx context.Context, ev wire.DeviceEvent) error {

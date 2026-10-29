@@ -26,6 +26,7 @@ var errPoison = errors.New("poison record")
 type store interface {
 	SaveBatch(ctx context.Context, env wire.TelemetryEnvelope) (duplicate bool, err error)
 	ApplyDeviceEvent(ctx context.Context, ev wire.DeviceEvent) error
+	SaveBundle(ctx context.Context, ev wire.BundleUploadedEvent) (duplicate bool, err error)
 }
 
 type Config struct {
@@ -47,7 +48,7 @@ func New(cfg Config, st store, log *slog.Logger, reg prometheus.Registerer) (*Pr
 	cl, err := kgo.NewClient(
 		kgo.SeedBrokers(cfg.Brokers...),
 		kgo.ConsumerGroup(cfg.Group),
-		kgo.ConsumeTopics(wire.TopicTelemetry, wire.TopicDeviceEvents),
+		kgo.ConsumeTopics(wire.TopicTelemetry, wire.TopicDeviceEvents, wire.TopicBundles),
 		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
 		kgo.DisableAutoCommit(),
 		// Hold off rebalances between a poll and its commit, so partitions are
@@ -177,6 +178,26 @@ func (p *Processor) handle(ctx context.Context, rec *kgo.Record) error {
 			return err
 		}
 		p.m.records.WithLabelValues(rec.Topic, "stored").Inc()
+		return nil
+
+	case wire.TopicBundles:
+		var ev wire.BundleUploadedEvent
+		if err := json.Unmarshal(rec.Value, &ev); err != nil {
+			return fmt.Errorf("%w: %v", errPoison, err)
+		}
+		if ev.BundleID == "" || ev.DeviceID == "" || ev.ObjectKey == "" {
+			return fmt.Errorf("%w: bundle event missing bundle id, device id or object key", errPoison)
+		}
+		dup, err := p.store.SaveBundle(ctx, ev)
+		if err != nil {
+			return err
+		}
+		if dup {
+			p.m.records.WithLabelValues(rec.Topic, "duplicate").Inc()
+			return nil
+		}
+		p.m.records.WithLabelValues(rec.Topic, "stored").Inc()
+		p.m.bundleIndexLatency.Observe(time.Since(ev.CollectedAt).Seconds())
 		return nil
 
 	default:

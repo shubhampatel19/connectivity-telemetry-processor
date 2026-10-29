@@ -12,6 +12,8 @@ type metrics struct {
 	duration      *prometheus.HistogramVec
 	ingestToStore prometheus.Histogram
 	commitErrors  prometheus.Counter
+
+	bundleIndexLatency prometheus.Histogram
 }
 
 func newMetrics(reg prometheus.Registerer) *metrics {
@@ -42,6 +44,11 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 		commitErrors: f.NewCounter(prometheus.CounterOpts{
 			Name: "connectivity_processor_commit_errors_total",
 			Help: "Failed Kafka offset commits.",
+		}),
+		bundleIndexLatency: f.NewHistogram(prometheus.HistogramOpts{
+			Name:    "connectivity_processor_bundle_index_latency_seconds",
+			Help:    "Delay between a device collecting a log bundle and the processor indexing it.",
+			Buckets: []float64{1, 2.5, 5, 10, 30, 60, 120, 300, 600, 1800, 3600},
 		}),
 	}
 }

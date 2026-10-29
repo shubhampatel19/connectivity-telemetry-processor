@@ -5,7 +5,7 @@ go 1.22
 require (
 	github.com/lib/pq v1.10.9
 	github.com/prometheus/client_golang v1.19.1
-	github.com/spr732/connectivity-contracts v0.0.0-20261028211120-56741d71a12a
+	github.com/spr732/connectivity-contracts v0.0.0-20261029072535-769397da56b1
 	github.com/spr732/connectivity-go-kit v0.0.0-20261028211120-59f314e99820
 	github.com/twmb/franz-go v1.17.1
 )

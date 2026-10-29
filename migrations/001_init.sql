@@ -1,4 +1,4 @@
--- Runs once, when the Postgres volume is first created.
+-- 001: devices, batch markers and telemetry samples.
 
 CREATE TABLE IF NOT EXISTS devices (
     device_id     TEXT PRIMARY KEY,
