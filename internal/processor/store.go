@@ -10,7 +10,7 @@ import (
 
 	_ "github.com/lib/pq"
 
-	"github.com/spr732/connectivity-contracts/wire"
+	"github.com/shubhampatel19/connectivity-contracts/wire"
 )
 
 type Store struct{ db *sql.DB }

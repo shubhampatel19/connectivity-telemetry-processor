@@ -1,12 +1,12 @@
-module github.com/spr732/connectivity-telemetry-processor
+module github.com/shubhampatel19/connectivity-telemetry-processor
 
 go 1.22
 
 require (
 	github.com/lib/pq v1.10.9
 	github.com/prometheus/client_golang v1.19.1
-	github.com/spr732/connectivity-contracts v0.0.0-20261029072535-769397da56b1
-	github.com/spr732/connectivity-go-kit v0.0.0-20261028211120-59f314e99820
+	github.com/shubhampatel19/connectivity-contracts v0.0.0-20261029183014-c623ff0bd05d
+	github.com/shubhampatel19/connectivity-go-kit v0.0.0-20261029182941-0fc2f045019b
 	github.com/twmb/franz-go v1.17.1
 )
 

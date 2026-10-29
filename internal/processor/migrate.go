@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/spr732/connectivity-telemetry-processor/migrations"
+	"github.com/shubhampatel19/connectivity-telemetry-processor/migrations"
 )
 
 // migrationLockID is an arbitrary constant naming the Postgres advisory lock

@@ -20,10 +20,10 @@ github.com/prometheus/common v0.48.0 h1:QO8U2CdOzSn1BBsmXJXduaaW+dY/5QLjfB8svtSz
 github.com/prometheus/common v0.48.0/go.mod h1:0/KsvlIEfPQCQ5I2iNSAWKPZziNCvRs5EC6ILDTlAPc=
 github.com/prometheus/procfs v0.12.0 h1:jluTpSng7V9hY0O2R9DzzJHYb2xULk9VTR1V1R/k6Bo=
 github.com/prometheus/procfs v0.12.0/go.mod h1:pcuDEFsWDnvcgNzo4EEweacyhjeA9Zk3cnaOZAZEfOo=
-github.com/spr732/connectivity-contracts v0.0.0-20261029072535-769397da56b1 h1:xAjFHljka+QN4HEzmcCeTR7l1Tcj/IoIo98+KKrxnyY=
-github.com/spr732/connectivity-contracts v0.0.0-20261029072535-769397da56b1/go.mod h1:jgHcFtBZxWHh+N/tqUqKkQ4hFuLsGROsGxRG69A15KA=
-github.com/spr732/connectivity-go-kit v0.0.0-20261028211120-59f314e99820 h1:mEsdUW43TEXh4hcnCsT37s5evA0Yfv9JsOoXbOypdcU=
-github.com/spr732/connectivity-go-kit v0.0.0-20261028211120-59f314e99820/go.mod h1:oKMKW6Kx9hPuFb6v3cbCYLKdQV2WYoTcGfW7hKVo7aQ=
+github.com/shubhampatel19/connectivity-contracts v0.0.0-20261029183014-c623ff0bd05d h1:BLNkbtTdZJIdgSORyuhTOZOMG4wedLRg6jU+tbUu60o=
+github.com/shubhampatel19/connectivity-contracts v0.0.0-20261029183014-c623ff0bd05d/go.mod h1:k2K8oUr4Lep2SG3gbTORZ5iXGk5F9cOuBYYQaTHYN1g=
+github.com/shubhampatel19/connectivity-go-kit v0.0.0-20261029182941-0fc2f045019b h1:6PX6IAszke1LHnGEBtB/mHJCO4e83Kc3f72DQ1dw6l4=
+github.com/shubhampatel19/connectivity-go-kit v0.0.0-20261029182941-0fc2f045019b/go.mod h1:E/61qqagQIfRm9DCoTBp86+Gz90amA2sCN0Q5eQNw0Q=
 github.com/twmb/franz-go v1.17.1 h1:0LwPsbbJeJ9R91DPUHSEd4su82WJWcTY1Zzbgbg4CeQ=
 github.com/twmb/franz-go v1.17.1/go.mod h1:NreRdJ2F7dziDY/m6VyspWd6sNxHKXdMZI42UfQ3GXM=
 github.com/twmb/franz-go/pkg/kmsg v1.8.0 h1:lAQB9Z3aMrIP9qF9288XcFf/ccaSxEitNA1CDTEIeTA=

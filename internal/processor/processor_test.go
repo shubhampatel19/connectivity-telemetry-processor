@@ -15,8 +15,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/spr732/connectivity-contracts/wire"
-	"github.com/spr732/connectivity-telemetry-processor/migrations"
+	"github.com/shubhampatel19/connectivity-contracts/wire"
+	"github.com/shubhampatel19/connectivity-telemetry-processor/migrations"
 )
 
 type fakeStore struct {

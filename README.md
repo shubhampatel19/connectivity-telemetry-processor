@@ -2,7 +2,7 @@
 
 Consumes device data from Kafka and writes it to Postgres: telemetry samples, device lifecycle events, and the index of uploaded log bundles. This service owns the database schema.
 
-Part of [Connectivity](https://github.com/spr732/connectivity-platform), a mock edge-to-cloud telemetry system built for practicing production debugging.
+Part of [Connectivity](https://github.com/shubhampatel19/connectivity-platform), a mock edge-to-cloud telemetry system built for practicing production debugging.
 
 ## Delivery semantics
 

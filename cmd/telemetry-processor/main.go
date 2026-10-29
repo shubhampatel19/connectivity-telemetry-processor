@@ -9,8 +9,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/spr732/connectivity-go-kit/platform"
-	"github.com/spr732/connectivity-telemetry-processor/internal/processor"
+	"github.com/shubhampatel19/connectivity-go-kit/platform"
+	"github.com/shubhampatel19/connectivity-telemetry-processor/internal/processor"
 )
 
 func main() {

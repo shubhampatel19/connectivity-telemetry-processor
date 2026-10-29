@@ -16,7 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/twmb/franz-go/pkg/kgo"
 
-	"github.com/spr732/connectivity-contracts/wire"
+	"github.com/shubhampatel19/connectivity-contracts/wire"
 )
 
 // errPoison marks a record that can never succeed (bad JSON, unknown type).
