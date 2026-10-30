@@ -9,8 +9,11 @@ import (
 	"time"
 
 	_ "github.com/lib/pq"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/shubhampatel19/connectivity-contracts/wire"
+	"github.com/shubhampatel19/connectivity-go-kit/platform"
 )
 
 type Store struct{ db *sql.DB }
@@ -54,6 +57,8 @@ func (s *Store) Close() error { return s.db.Close() }
 // batch was already there, which is normal after a device retry or a consumer
 // replay.
 func (s *Store) SaveBatch(ctx context.Context, env wire.TelemetryEnvelope) (duplicate bool, err error) {
+	ctx, end := dbSpan(ctx, "postgres save batch", attribute.Int("batch.samples", len(env.Batch.Samples)))
+	defer func() { end(err) }()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -103,6 +108,8 @@ func sampleInsert(b wire.TelemetryBatch) (string, []any) {
 // events (a retried completion can publish twice); the primary key absorbs
 // them and duplicate reports it.
 func (s *Store) SaveBundle(ctx context.Context, ev wire.BundleUploadedEvent) (duplicate bool, err error) {
+	ctx, end := dbSpan(ctx, "postgres index bundle")
+	defer func() { end(err) }()
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO log_bundles (bundle_id, device_id, reason, object_key, size_bytes, sha256, collected_at, uploaded_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -120,7 +127,9 @@ func (s *Store) SaveBundle(ctx context.Context, ev wire.BundleUploadedEvent) (du
 
 // ApplyDeviceEvent upserts the device row. last_seen only moves forward, so a
 // replayed or late event can't make a live device look stale.
-func (s *Store) ApplyDeviceEvent(ctx context.Context, ev wire.DeviceEvent) error {
+func (s *Store) ApplyDeviceEvent(ctx context.Context, ev wire.DeviceEvent) (err error) {
+	ctx, end := dbSpan(ctx, "postgres upsert device", attribute.String("device.event", string(ev.Type)))
+	defer func() { end(err) }()
 	switch ev.Type {
 	case wire.EventRegistered:
 		_, err := s.db.ExecContext(ctx,
@@ -142,5 +151,16 @@ func (s *Store) ApplyDeviceEvent(ctx context.Context, ev wire.DeviceEvent) error
 		return err
 	default:
 		return fmt.Errorf("%w: unknown device event type %q", errPoison, ev.Type)
+	}
+}
+
+// dbSpan starts a client span for one store operation; end records its error.
+func dbSpan(ctx context.Context, name string, attrs ...attribute.KeyValue) (context.Context, func(error)) {
+	ctx, span := platform.Tracer().Start(ctx, name,
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(append(attrs, attribute.String("db.system", "postgresql"))...))
+	return ctx, func(err error) {
+		platform.RecordError(ctx, err)
+		span.End()
 	}
 }

@@ -1,25 +1,45 @@
 module github.com/shubhampatel19/connectivity-telemetry-processor
 
-go 1.22
+go 1.22.0
+
+toolchain go1.22.12
 
 require (
 	github.com/lib/pq v1.10.9
 	github.com/prometheus/client_golang v1.19.1
 	github.com/shubhampatel19/connectivity-contracts v0.0.0-20261029183014-c623ff0bd05d
-	github.com/shubhampatel19/connectivity-go-kit v0.0.0-20261029182941-0fc2f045019b
+	github.com/shubhampatel19/connectivity-go-kit v0.0.0-20261030061330-4f39bed0cac2
 	github.com/twmb/franz-go v1.17.1
+	go.opentelemetry.io/otel v1.34.0
+	go.opentelemetry.io/otel/sdk v1.34.0
+	go.opentelemetry.io/otel/trace v1.34.0
 )
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/cespare/xxhash/v2 v2.2.0 // indirect
+	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/go-logr/logr v1.4.2 // indirect
+	github.com/go-logr/stdr v1.2.2 // indirect
+	github.com/google/uuid v1.6.0 // indirect
+	github.com/grpc-ecosystem/grpc-gateway/v2 v2.25.1 // indirect
 	github.com/klauspost/compress v1.17.8 // indirect
 	github.com/pierrec/lz4/v4 v4.1.21 // indirect
 	github.com/prometheus/client_model v0.5.0 // indirect
 	github.com/prometheus/common v0.48.0 // indirect
 	github.com/prometheus/procfs v0.12.0 // indirect
 	github.com/twmb/franz-go/pkg/kmsg v1.8.0 // indirect
-	golang.org/x/sys v0.17.0 // indirect
-	google.golang.org/protobuf v1.33.0 // indirect
+	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
+	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.34.0 // indirect
+	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.34.0 // indirect
+	go.opentelemetry.io/otel/metric v1.34.0 // indirect
+	go.opentelemetry.io/proto/otlp v1.5.0 // indirect
+	golang.org/x/net v0.34.0 // indirect
+	golang.org/x/sys v0.29.0 // indirect
+	golang.org/x/text v0.21.0 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20250115164207-1a7da9e5054f // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20250115164207-1a7da9e5054f // indirect
+	google.golang.org/grpc v1.69.4 // indirect
+	google.golang.org/protobuf v1.36.3 // indirect
 )

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/shubhampatel19/connectivity-go-kit/platform"
 	"github.com/shubhampatel19/connectivity-telemetry-processor/internal/processor"
@@ -31,6 +32,18 @@ func run(log *slog.Logger) error {
 	if err := env.Err(); err != nil {
 		return err
 	}
+
+	tracingCtx, cancelTracing := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownTracing, err := platform.InitTracing(tracingCtx, "telemetry-processor", log)
+	cancelTracing()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = shutdownTracing(ctx)
+	}()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()

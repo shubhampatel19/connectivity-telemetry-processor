@@ -15,8 +15,11 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/shubhampatel19/connectivity-contracts/wire"
+	"github.com/shubhampatel19/connectivity-go-kit/platform"
 )
 
 // errPoison marks a record that can never succeed (bad JSON, unknown type).
@@ -114,7 +117,27 @@ func (p *Processor) Run(ctx context.Context) error {
 // capped exponential backoff, in place. Blocking the partition is deliberate:
 // skipping ahead would break per-device ordering. Consumer lag is how you see
 // it happening.
-func (p *Processor) handleWithRetry(ctx context.Context, rec *kgo.Record) error {
+//
+// Each record gets one consumer span, continuing the trace the ingest API
+// put in the record's headers. Retries are events on that span, so a record
+// stuck behind a failing database shows up as one long span, not many.
+func (p *Processor) handleWithRetry(ctx context.Context, rec *kgo.Record) (err error) {
+	spanCtx, span := platform.Tracer().Start(platform.ContextFromHeaders(ctx, recordHeaders(rec)), "process "+rec.Topic,
+		trace.WithSpanKind(trace.SpanKindConsumer),
+		trace.WithAttributes(
+			attribute.String("messaging.system", "kafka"),
+			attribute.String("messaging.destination.name", rec.Topic),
+			attribute.String("messaging.consumer.group.name", p.cfg.Group),
+			attribute.Int("messaging.destination.partition.id", int(rec.Partition)),
+			attribute.Int64("messaging.kafka.offset", rec.Offset),
+			attribute.Float64("messaging.kafka.record_age_seconds", time.Since(rec.Timestamp).Seconds()),
+		))
+	defer func() {
+		platform.RecordError(spanCtx, err)
+		span.End()
+	}()
+	ctx = spanCtx
+
 	backoff := 200 * time.Millisecond
 	for attempt := 1; ; attempt++ {
 		start := time.Now()
@@ -125,7 +148,9 @@ func (p *Processor) handleWithRetry(ctx context.Context, rec *kgo.Record) error 
 		}
 		if errors.Is(err, errPoison) {
 			p.m.records.WithLabelValues(rec.Topic, "poison").Inc()
-			p.log.Error("skipping poison record",
+			outcome(ctx, "poison")
+			platform.RecordError(ctx, err)
+			p.log.ErrorContext(ctx, "skipping poison record",
 				"topic", rec.Topic, "partition", rec.Partition, "offset", rec.Offset, "err", err)
 			return nil
 		}
@@ -134,7 +159,8 @@ func (p *Processor) handleWithRetry(ctx context.Context, rec *kgo.Record) error 
 		}
 
 		p.m.retries.WithLabelValues(rec.Topic).Inc()
-		p.log.Warn("record failed, retrying",
+		span.AddEvent("retry", trace.WithAttributes(attribute.Int("attempt", attempt), attribute.String("error", err.Error())))
+		p.log.WarnContext(ctx, "record failed, retrying",
 			"topic", rec.Topic, "partition", rec.Partition, "offset", rec.Offset,
 			"attempt", attempt, "retry_in", backoff, "err", err)
 		select {
@@ -156,15 +182,22 @@ func (p *Processor) handle(ctx context.Context, rec *kgo.Record) error {
 		if env.Batch.BatchID == "" || env.Batch.DeviceID == "" {
 			return fmt.Errorf("%w: envelope missing batch or device id", errPoison)
 		}
+		trace.SpanFromContext(ctx).SetAttributes(
+			attribute.String("device.id", env.Batch.DeviceID),
+			attribute.String("batch.id", env.Batch.BatchID),
+			attribute.Int("batch.samples", len(env.Batch.Samples)),
+		)
 		dup, err := p.store.SaveBatch(ctx, env)
 		if err != nil {
 			return err
 		}
 		if dup {
 			p.m.records.WithLabelValues(rec.Topic, "duplicate").Inc()
+			outcome(ctx, "duplicate")
 			return nil
 		}
 		p.m.records.WithLabelValues(rec.Topic, "stored").Inc()
+		outcome(ctx, "stored")
 		p.m.samples.Add(float64(len(env.Batch.Samples)))
 		p.m.ingestToStore.Observe(time.Since(env.ReceivedAt).Seconds())
 		return nil
@@ -178,6 +211,7 @@ func (p *Processor) handle(ctx context.Context, rec *kgo.Record) error {
 			return err
 		}
 		p.m.records.WithLabelValues(rec.Topic, "stored").Inc()
+		outcome(ctx, "stored")
 		return nil
 
 	case wire.TopicBundles:
@@ -188,19 +222,38 @@ func (p *Processor) handle(ctx context.Context, rec *kgo.Record) error {
 		if ev.BundleID == "" || ev.DeviceID == "" || ev.ObjectKey == "" {
 			return fmt.Errorf("%w: bundle event missing bundle id, device id or object key", errPoison)
 		}
+		trace.SpanFromContext(ctx).SetAttributes(attribute.String("device.id", ev.DeviceID), attribute.String("bundle.id", ev.BundleID))
 		dup, err := p.store.SaveBundle(ctx, ev)
 		if err != nil {
 			return err
 		}
 		if dup {
 			p.m.records.WithLabelValues(rec.Topic, "duplicate").Inc()
+			outcome(ctx, "duplicate")
 			return nil
 		}
 		p.m.records.WithLabelValues(rec.Topic, "stored").Inc()
+		outcome(ctx, "stored")
 		p.m.bundleIndexLatency.Observe(time.Since(ev.CollectedAt).Seconds())
 		return nil
 
 	default:
 		return fmt.Errorf("%w: unexpected topic %q", errPoison, rec.Topic)
 	}
+}
+
+// recordHeaders turns Kafka record headers into the map the trace
+// propagator reads.
+func recordHeaders(rec *kgo.Record) map[string]string {
+	m := make(map[string]string, len(rec.Headers))
+	for _, h := range rec.Headers {
+		m[h.Key] = string(h.Value)
+	}
+	return m
+}
+
+// outcome records what happened to the record on its span: stored,
+// duplicate (a retry or replay the store absorbed) or poison.
+func outcome(ctx context.Context, o string) {
+	trace.SpanFromContext(ctx).SetAttributes(attribute.String("outcome", o))
 }

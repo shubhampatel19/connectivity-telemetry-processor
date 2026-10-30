@@ -38,6 +38,10 @@ This replaces Postgres's first-boot init scripts, which only run on an empty dat
 | Database down or slow | Retried in place with capped backoff; the partition waits | Consumer lag, `connectivity_processor_retries_total` |
 | Replay after crash | Batch skipped as a duplicate | `result="duplicate"` |
 
+## Tracing
+
+Each record gets one consumer span (`process telemetry.raw`) continuing the trace the ingest API put in the record's headers, with the Postgres work as a child span. The gap between the producer span and this one is time spent in Kafka, which is consumer lag for that record. Retries are events on the same span, so a record stuck behind a failing database is one long span with its errors attached, and the span's `outcome` says whether it was stored, a duplicate or poison. Log lines about a record carry its `trace_id`.
+
 ## Configuration
 
 | Variable | Default |
