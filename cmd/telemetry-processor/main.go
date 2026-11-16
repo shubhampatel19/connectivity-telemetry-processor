@@ -29,7 +29,16 @@ func run(log *slog.Logger) error {
 	dsn := env.Required("DATABASE_URL")
 	metricsAddr := env.String("METRICS_ADDR", ":9101")
 	maxPoll := env.Int("MAX_POLL_RECORDS", 500)
+	retention := processor.RetentionConfig{
+		Telemetry: env.Duration("TELEMETRY_RETENTION", 24*time.Hour),
+		BatchIDs:  env.Duration("BATCH_ID_RETENTION", 48*time.Hour),
+		Interval:  env.Duration("RETENTION_INTERVAL", 5*time.Minute),
+		Ahead:     env.Int("PARTITIONS_AHEAD", 3),
+	}
 	if err := env.Err(); err != nil {
+		return err
+	}
+	if err := retention.Validate(); err != nil {
 		return err
 	}
 
@@ -56,6 +65,11 @@ func run(log *slog.Logger) error {
 	if err := store.Migrate(ctx, log); err != nil {
 		return fmt.Errorf("migrate database: %w", err)
 	}
+	// Before the consumer starts: the partitions for the coming hours must
+	// exist, or the first inserts would all land in the default partition.
+	if err := store.EnsurePartitions(ctx, retention, log); err != nil {
+		return fmt.Errorf("prepare telemetry partitions: %w", err)
+	}
 
 	reg := platform.NewRegistry()
 	proc, err := processor.New(processor.Config{Brokers: brokers, Group: group, MaxPoll: maxPoll}, store, log, reg)
@@ -74,6 +88,8 @@ func run(log *slog.Logger) error {
 			stop()
 		}
 	}()
+
+	go proc.RunRetention(ctx, store, retention)
 
 	return proc.Run(ctx)
 }

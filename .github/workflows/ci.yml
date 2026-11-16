@@ -1,13 +1,28 @@
 name: ci
 
+# Every push runs CI, on any branch, so a branch is verified before a pull
+# request exists. Pull requests from forks run it too.
 on:
   push:
-    branches: [main]
   pull_request:
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    # A real Postgres for the store tests: migrations, partitioning, retention
+    # and what the database does with data it won't accept.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      TEST_DATABASE_URL: postgres://postgres:test@localhost:5432/postgres?sslmode=disable
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -23,7 +38,11 @@ jobs:
       - name: Vet
         run: go vet ./...
       - name: Test
-        run: go test -race ./...
+        run: |
+          go test -race -v ./... > test.log 2>&1 || { tail -80 test.log; echo "::error::tests failed"; exit 1; }
+          tail -5 test.log
+          if grep -q -- "--- SKIP" test.log; then grep -- "--- SKIP" test.log; echo "::error::a test was skipped: the Postgres tests must run in CI"; exit 1; fi
+          echo "::notice::$(grep -c -- '--- PASS' test.log) tests passed, none skipped (Postgres tests included)"
 
   image:
     needs: test

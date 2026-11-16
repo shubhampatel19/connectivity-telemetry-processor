@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -22,8 +23,10 @@ import (
 	"github.com/shubhampatel19/connectivity-go-kit/platform"
 )
 
-// errPoison marks a record that can never succeed (bad JSON, unknown type).
-// Those are logged and skipped; retrying them would block the partition forever.
+// errPoison marks a record that can never succeed: bad JSON, an unknown type,
+// or data the database rejects however often it is offered. Those are copied
+// to the topic's dead-letter topic and skipped; retrying them would block the
+// partition, and every device on it, forever.
 var errPoison = errors.New("poison record")
 
 type store interface {
@@ -37,11 +40,26 @@ type Config struct {
 	Group    string
 	MaxPoll  int
 	MaxRetry time.Duration
+	// AttemptTimeout bounds one attempt at one record, so a database that
+	// accepts connections and then says nothing (a black-holed network path,
+	// a lock held elsewhere) turns into visible retries instead of a consumer
+	// that is silently stuck. Zero means thirty seconds.
+	AttemptTimeout time.Duration
+	// DeadLetterTimeout bounds the wait for a dead-letter write. Zero means
+	// five seconds.
+	DeadLetterTimeout time.Duration
+}
+
+// deadLetterer writes a record to another topic and waits for the broker to
+// acknowledge it. The Kafka client does this in production; tests fake it.
+type deadLetterer interface {
+	ProduceSync(ctx context.Context, rs ...*kgo.Record) kgo.ProduceResults
 }
 
 type Processor struct {
 	cfg   Config
 	cl    *kgo.Client
+	dlq   deadLetterer
 	store store
 	log   *slog.Logger
 	m     *metrics
@@ -58,11 +76,17 @@ func New(cfg Config, st store, log *slog.Logger, reg prometheus.Registerer) (*Pr
 		// never handed to another consumer while their records are mid-write.
 		kgo.BlockRebalanceOnPoll(),
 		kgo.FetchMaxWait(500*time.Millisecond),
+		// The same client writes dead letters. They are rare and each one is
+		// waited for, so there is nothing to gain from batching them.
+		kgo.RequiredAcks(kgo.AllISRAcks()),
+		kgo.ProducerLinger(0),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create kafka consumer: %w", err)
 	}
-	return newWithClient(cfg, cl, st, log, reg), nil
+	p := newWithClient(cfg, cl, st, log, reg)
+	p.dlq = cl
+	return p, nil
 }
 
 func newWithClient(cfg Config, cl *kgo.Client, st store, log *slog.Logger, reg prometheus.Registerer) *Processor {
@@ -71,6 +95,12 @@ func newWithClient(cfg Config, cl *kgo.Client, st store, log *slog.Logger, reg p
 	}
 	if cfg.MaxRetry <= 0 {
 		cfg.MaxRetry = 10 * time.Second
+	}
+	if cfg.AttemptTimeout <= 0 {
+		cfg.AttemptTimeout = 30 * time.Second
+	}
+	if cfg.DeadLetterTimeout <= 0 {
+		cfg.DeadLetterTimeout = 5 * time.Second
 	}
 	return &Processor{cfg: cfg, cl: cl, store: st, log: log, m: newMetrics(reg)}
 }
@@ -141,7 +171,9 @@ func (p *Processor) handleWithRetry(ctx context.Context, rec *kgo.Record) (err e
 	backoff := 200 * time.Millisecond
 	for attempt := 1; ; attempt++ {
 		start := time.Now()
-		err := p.handle(ctx, rec)
+		attemptCtx, cancel := context.WithTimeout(ctx, p.cfg.AttemptTimeout)
+		err := p.handle(attemptCtx, rec)
+		cancel()
 		if err == nil {
 			p.m.duration.WithLabelValues(rec.Topic).Observe(time.Since(start).Seconds())
 			return nil
@@ -150,8 +182,10 @@ func (p *Processor) handleWithRetry(ctx context.Context, rec *kgo.Record) (err e
 			p.m.records.WithLabelValues(rec.Topic, "poison").Inc()
 			outcome(ctx, "poison")
 			platform.RecordError(ctx, err)
+			deadLettered := p.deadLetter(ctx, rec, err)
 			p.log.ErrorContext(ctx, "skipping poison record",
-				"topic", rec.Topic, "partition", rec.Partition, "offset", rec.Offset, "err", err)
+				"topic", rec.Topic, "partition", rec.Partition, "offset", rec.Offset,
+				"dead_lettered", deadLettered, "err", err)
 			return nil
 		}
 		if ctx.Err() != nil {
@@ -189,7 +223,7 @@ func (p *Processor) handle(ctx context.Context, rec *kgo.Record) error {
 		)
 		dup, err := p.store.SaveBatch(ctx, env)
 		if err != nil {
-			return err
+			return classify(err)
 		}
 		if dup {
 			p.m.records.WithLabelValues(rec.Topic, "duplicate").Inc()
@@ -208,7 +242,7 @@ func (p *Processor) handle(ctx context.Context, rec *kgo.Record) error {
 			return fmt.Errorf("%w: %v", errPoison, err)
 		}
 		if err := p.store.ApplyDeviceEvent(ctx, ev); err != nil {
-			return err
+			return classify(err)
 		}
 		p.m.records.WithLabelValues(rec.Topic, "stored").Inc()
 		outcome(ctx, "stored")
@@ -225,7 +259,7 @@ func (p *Processor) handle(ctx context.Context, rec *kgo.Record) error {
 		trace.SpanFromContext(ctx).SetAttributes(attribute.String("device.id", ev.DeviceID), attribute.String("bundle.id", ev.BundleID))
 		dup, err := p.store.SaveBundle(ctx, ev)
 		if err != nil {
-			return err
+			return classify(err)
 		}
 		if dup {
 			p.m.records.WithLabelValues(rec.Topic, "duplicate").Inc()
@@ -240,6 +274,41 @@ func (p *Processor) handle(ctx context.Context, rec *kgo.Record) error {
 	default:
 		return fmt.Errorf("%w: unexpected topic %q", errPoison, rec.Topic)
 	}
+}
+
+// deadLetter copies a poison record, unchanged, to its topic's dead-letter
+// topic, with headers saying why it was set aside and where it came from. It
+// reports whether the copy was acknowledged.
+//
+// A failed copy does not stop the record being skipped. One unprocessable
+// record is never worth stalling a partition for, and the original is still
+// in its source topic, at the partition and offset in the log line, until
+// retention removes it. The failure is counted and alerted on.
+func (p *Processor) deadLetter(ctx context.Context, rec *kgo.Record, cause error) bool {
+	if p.dlq == nil {
+		return false
+	}
+	topic := wire.DeadLetterTopic(rec.Topic)
+	out := &kgo.Record{Topic: topic, Key: rec.Key, Value: rec.Value}
+	out.Headers = append(out.Headers, rec.Headers...)
+	out.Headers = append(out.Headers,
+		kgo.RecordHeader{Key: wire.HeaderDLQReason, Value: []byte(cause.Error())},
+		kgo.RecordHeader{Key: wire.HeaderDLQGroup, Value: []byte(p.cfg.Group)},
+		kgo.RecordHeader{Key: wire.HeaderDLQPartition, Value: []byte(strconv.Itoa(int(rec.Partition)))},
+		kgo.RecordHeader{Key: wire.HeaderDLQOffset, Value: []byte(strconv.FormatInt(rec.Offset, 10))},
+	)
+	// Not the caller's context: a record given up on during shutdown should
+	// still reach the dead-letter topic.
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), p.cfg.DeadLetterTimeout)
+	defer cancel()
+	if err := p.dlq.ProduceSync(dctx, out).FirstErr(); err != nil {
+		p.m.deadLetterFailures.WithLabelValues(rec.Topic).Inc()
+		p.log.ErrorContext(ctx, "dead-letter write failed; the record is only in its source topic now",
+			"dead_letter_topic", topic, "topic", rec.Topic, "partition", rec.Partition, "offset", rec.Offset, "err", err)
+		return false
+	}
+	p.m.deadLettered.WithLabelValues(rec.Topic).Inc()
+	return true
 }
 
 // recordHeaders turns Kafka record headers into the map the trace

@@ -13,6 +13,13 @@ type metrics struct {
 	ingestToStore prometheus.Histogram
 	commitErrors  prometheus.Counter
 
+	deadLettered       *prometheus.CounterVec
+	deadLetterFailures *prometheus.CounterVec
+	retentionDeleted   *prometheus.CounterVec
+	retentionErrors    prometheus.Counter
+	partitionsDropped  prometheus.Counter
+	retentionLastRun   prometheus.Gauge
+
 	bundleIndexLatency prometheus.Histogram
 }
 
@@ -44,6 +51,30 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 		commitErrors: f.NewCounter(prometheus.CounterOpts{
 			Name: "connectivity_processor_commit_errors_total",
 			Help: "Failed Kafka offset commits.",
+		}),
+		deadLettered: f.NewCounterVec(prometheus.CounterOpts{
+			Name: "connectivity_processor_dead_lettered_total",
+			Help: "Poison records copied to a dead-letter topic, by source topic.",
+		}, []string{"topic"}),
+		deadLetterFailures: f.NewCounterVec(prometheus.CounterOpts{
+			Name: "connectivity_processor_dead_letter_failures_total",
+			Help: "Poison records skipped without reaching a dead-letter topic, by source topic.",
+		}, []string{"topic"}),
+		retentionDeleted: f.NewCounterVec(prometheus.CounterOpts{
+			Name: "connectivity_processor_retention_rows_deleted_total",
+			Help: "Rows removed by retention, by table.",
+		}, []string{"table"}),
+		partitionsDropped: f.NewCounter(prometheus.CounterOpts{
+			Name: "connectivity_processor_retention_partitions_dropped_total",
+			Help: "Hourly telemetry partitions dropped by retention.",
+		}),
+		retentionErrors: f.NewCounter(prometheus.CounterOpts{
+			Name: "connectivity_processor_retention_errors_total",
+			Help: "Retention passes that failed.",
+		}),
+		retentionLastRun: f.NewGauge(prometheus.GaugeOpts{
+			Name: "connectivity_processor_retention_last_success_timestamp_seconds",
+			Help: "When retention last completed a pass on this replica (Unix time).",
 		}),
 		bundleIndexLatency: f.NewHistogram(prometheus.HistogramOpts{
 			Name:    "connectivity_processor_bundle_index_latency_seconds",

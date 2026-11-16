@@ -35,8 +35,8 @@ github.com/prometheus/common v0.48.0 h1:QO8U2CdOzSn1BBsmXJXduaaW+dY/5QLjfB8svtSz
 github.com/prometheus/common v0.48.0/go.mod h1:0/KsvlIEfPQCQ5I2iNSAWKPZziNCvRs5EC6ILDTlAPc=
 github.com/prometheus/procfs v0.12.0 h1:jluTpSng7V9hY0O2R9DzzJHYb2xULk9VTR1V1R/k6Bo=
 github.com/prometheus/procfs v0.12.0/go.mod h1:pcuDEFsWDnvcgNzo4EEweacyhjeA9Zk3cnaOZAZEfOo=
-github.com/shubhampatel19/connectivity-contracts v0.0.0-20261029183014-c623ff0bd05d h1:BLNkbtTdZJIdgSORyuhTOZOMG4wedLRg6jU+tbUu60o=
-github.com/shubhampatel19/connectivity-contracts v0.0.0-20261029183014-c623ff0bd05d/go.mod h1:k2K8oUr4Lep2SG3gbTORZ5iXGk5F9cOuBYYQaTHYN1g=
+github.com/shubhampatel19/connectivity-contracts v0.0.0-20261116175614-aee06aa906fc h1:aXG8n1fKUf/3z3EZZOzOfak+jKgs4A4ALTwjErwri3I=
+github.com/shubhampatel19/connectivity-contracts v0.0.0-20261116175614-aee06aa906fc/go.mod h1:k2K8oUr4Lep2SG3gbTORZ5iXGk5F9cOuBYYQaTHYN1g=
 github.com/shubhampatel19/connectivity-go-kit v0.0.0-20261030061330-4f39bed0cac2 h1:laEnqQDmcPGbj5T5A+4aiqHNIkliMqfDFe6UVyYQBwk=
 github.com/shubhampatel19/connectivity-go-kit v0.0.0-20261030061330-4f39bed0cac2/go.mod h1:Bd/3ptHqFghlasvB7YYSuhFhNn77sSnMg+yzzrlbu1o=
 github.com/stretchr/testify v1.10.0 h1:Xv5erBjTwe/5IxqUQTdXv5kgmIvbHo3QQyRwhJsOfJA=

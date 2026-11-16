@@ -7,7 +7,7 @@ toolchain go1.22.12
 require (
 	github.com/lib/pq v1.10.9
 	github.com/prometheus/client_golang v1.19.1
-	github.com/shubhampatel19/connectivity-contracts v0.0.0-20261029183014-c623ff0bd05d
+	github.com/shubhampatel19/connectivity-contracts v0.0.0-20261116175614-aee06aa906fc
 	github.com/shubhampatel19/connectivity-go-kit v0.0.0-20261030061330-4f39bed0cac2
 	github.com/twmb/franz-go v1.17.1
 	go.opentelemetry.io/otel v1.34.0

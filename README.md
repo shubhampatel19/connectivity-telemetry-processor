@@ -4,6 +4,8 @@ Consumes device data from Kafka and writes it to Postgres: telemetry samples, de
 
 Part of [Connectivity](https://github.com/shubhampatel19/connectivity-platform), a mock edge-to-cloud telemetry system built for practicing production debugging.
 
+See [docs/DESIGN.md](docs/DESIGN.md) for how the code is put together and why.
+
 ## Delivery semantics
 
 Delivery is **at-least-once with idempotent writes**, which adds up to effectively-once storage.
@@ -27,6 +29,7 @@ Migrations are numbered SQL files in `migrations/`, embedded in the binary and a
 - Each one runs in its own transaction and is recorded in `schema_migrations`.
 - A Postgres advisory lock serializes them, so replicas starting together take turns.
 - Never edit a migration that has shipped; add a new one. Keep each safe to re-run (`IF NOT EXISTS`).
+- `003` turns `telemetry` into a partitioned table by attaching the existing table as the default partition, so no rows are copied.
 
 This replaces Postgres's first-boot init scripts, which only run on an empty data volume and silently skip new tables on an existing one.
 
@@ -34,9 +37,23 @@ This replaces Postgres's first-boot init scripts, which only run on an empty dat
 
 | Failure | Behavior | How you'd notice |
 |---|---|---|
-| Malformed record | Logged, counted as `poison`, skipped | `connectivity_processor_records_total{result="poison"}` |
-| Database down or slow | Retried in place with capped backoff; the partition waits | Consumer lag, `connectivity_processor_retries_total` |
+| Malformed record | Copied to `<topic>.dlq`, counted as `poison`, skipped | `connectivity_processor_records_total{result="poison"}`, `connectivity_processor_dead_lettered_total` |
+| Record the database will never accept (Postgres class 22 or 23: a NUL byte in text, a value out of range) | Same as a malformed record | Same, with the Postgres error in the `x-dlq-reason` header |
+| Dead-letter write fails | The record is still skipped; it stays in its source topic at the logged partition and offset | `connectivity_processor_dead_letter_failures_total` |
+| Database down, slow, or silent | Retried in place with capped backoff, each attempt bounded at 30s; the partition waits | Consumer lag, `connectivity_processor_retries_total` |
+| Schema and code disagree (missing table or column) | Retried, never skipped: it affects every record | Lag and retries on every partition at once |
 | Replay after crash | Batch skipped as a duplicate | `result="duplicate"` |
+
+## Retention
+
+`telemetry` is partitioned by hour. A loop in every replica (one at a time, under an advisory lock) creates the partitions for the coming hours, drops partitions older than `TELEMETRY_RETENTION`, and trims late rows from the default partition and batch markers older than `BATCH_ID_RETENTION`. Batch markers are what make replays idempotent, so `BATCH_ID_RETENTION` must cover Kafka's retention and the longest a gateway can hold a batch.
+
+| Metric | Meaning |
+|---|---|
+| `connectivity_processor_retention_last_success_timestamp_seconds` | When this replica last completed a pass |
+| `connectivity_processor_retention_partitions_dropped_total` | Hourly partitions dropped |
+| `connectivity_processor_retention_rows_deleted_total{table}` | Rows trimmed from `telemetry_default` and `ingested_batches` |
+| `connectivity_processor_retention_errors_total` | Failed passes |
 
 ## Tracing
 
@@ -50,4 +67,8 @@ Each record gets one consumer span (`process telemetry.raw`) continuing the trac
 | `CONSUMER_GROUP` | `telemetry-processor` |
 | `DATABASE_URL` | required |
 | `MAX_POLL_RECORDS` | `500` |
+| `TELEMETRY_RETENTION` | `24h` |
+| `BATCH_ID_RETENTION` | `48h` (at least `TELEMETRY_RETENTION`) |
+| `RETENTION_INTERVAL` | `5m` |
+| `PARTITIONS_AHEAD` | `3` (hours) |
 | `METRICS_ADDR` | `:9101` |

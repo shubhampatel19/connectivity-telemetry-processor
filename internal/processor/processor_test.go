@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lib/pq"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -166,7 +167,7 @@ func TestMigrationsApplyInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"001_init.sql", "002_log_bundles.sql"}
+	want := []string{"001_init.sql", "002_log_bundles.sql", "003_partition_telemetry.sql"}
 	if strings.Join(names, ",") != strings.Join(want, ",") {
 		t.Fatalf("migrations = %v, want %v", names, want)
 	}
@@ -175,5 +176,84 @@ func TestMigrationsApplyInOrder(t *testing.T) {
 		if !strings.Contains(string(body), "IF NOT EXISTS") {
 			t.Fatalf("%s should be safe to re-run (use IF NOT EXISTS)", n)
 		}
+	}
+}
+
+type fakeDLQ struct {
+	records []*kgo.Record
+	err     error
+}
+
+func (f *fakeDLQ) ProduceSync(_ context.Context, rs ...*kgo.Record) kgo.ProduceResults {
+	f.records = append(f.records, rs...)
+	return kgo.ProduceResults{{Record: rs[0], Err: f.err}}
+}
+
+func TestPoisonRecordIsDeadLettered(t *testing.T) {
+	p := newTestProcessor(&fakeStore{})
+	dlq := &fakeDLQ{}
+	p.dlq = dlq
+	rec := &kgo.Record{Topic: wire.TopicTelemetry, Key: []byte("dev-1"), Value: []byte("{not json"), Partition: 4, Offset: 99,
+		Headers: []kgo.RecordHeader{{Key: "traceparent", Value: []byte("00-abc-def-01")}}}
+	if err := p.handleWithRetry(context.Background(), rec); err != nil {
+		t.Fatal(err)
+	}
+	if len(dlq.records) != 1 {
+		t.Fatalf("dead-lettered %d records, want 1", len(dlq.records))
+	}
+	got := dlq.records[0]
+	if got.Topic != "telemetry.raw.dlq" || string(got.Key) != "dev-1" || string(got.Value) != "{not json" {
+		t.Fatalf("dead letter = %s key=%s value=%s", got.Topic, got.Key, got.Value)
+	}
+	h := map[string]string{}
+	for _, kv := range got.Headers {
+		h[kv.Key] = string(kv.Value)
+	}
+	if h["traceparent"] == "" || h[wire.HeaderDLQPartition] != "4" || h[wire.HeaderDLQOffset] != "99" ||
+		h[wire.HeaderDLQGroup] != "test" || !strings.Contains(h[wire.HeaderDLQReason], "poison") {
+		t.Fatalf("headers = %v", h)
+	}
+	if got := testutil.ToFloat64(p.m.deadLettered.WithLabelValues(wire.TopicTelemetry)); got != 1 {
+		t.Fatalf("dead-lettered counter = %v", got)
+	}
+}
+
+func TestPoisonRecordIsSkippedEvenIfTheDeadLetterWriteFails(t *testing.T) {
+	p := newTestProcessor(&fakeStore{})
+	p.dlq = &fakeDLQ{err: errors.New("UNKNOWN_TOPIC_OR_PARTITION")}
+	rec := &kgo.Record{Topic: wire.TopicTelemetry, Value: []byte("{not json")}
+	if err := p.handleWithRetry(context.Background(), rec); err != nil {
+		t.Fatalf("a failed dead-letter write must not block the partition: %v", err)
+	}
+	if got := testutil.ToFloat64(p.m.deadLetterFailures.WithLabelValues(wire.TopicTelemetry)); got != 1 {
+		t.Fatalf("failure counter = %v", got)
+	}
+}
+
+type rejectingStore struct{ fakeStore }
+
+func (rejectingStore) SaveBatch(context.Context, wire.TelemetryEnvelope) (bool, error) {
+	return false, &pq.Error{Code: "22021", Message: `invalid byte sequence for encoding "UTF8": 0x00`}
+}
+
+func TestRecordTheDatabaseRejectsIsNotRetried(t *testing.T) {
+	p := newTestProcessor(&rejectingStore{})
+	dlq := &fakeDLQ{}
+	p.dlq = dlq
+	done := make(chan error, 1)
+	go func() { done <- p.handleWithRetry(context.Background(), telemetryRecord(t, "b1")) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("still retrying a record the database will never accept")
+	}
+	if len(dlq.records) != 1 {
+		t.Fatalf("dead-lettered %d records, want 1", len(dlq.records))
+	}
+	if got := testutil.ToFloat64(p.m.retries.WithLabelValues(wire.TopicTelemetry)); got != 0 {
+		t.Fatalf("retried %v times", got)
 	}
 }
